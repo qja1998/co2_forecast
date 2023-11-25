@@ -103,13 +103,14 @@ class TransAm(nn.Module):
 def create_input_sequences(input_data, tw, output_window):
     inout_seq = []
     L = len(input_data)
-    for i in range(L-tw):
-        train_seq = np.append(input_data[i:i+tw][:-output_window] , output_window * [0])
-        train_label = input_data[i:i+tw]
+    for i in range(0, L-tw):
+        train_seq = list(input_data.supply[i:i+tw-output_window]) + list(input_data.iloc[i+tw, 1:]) + output_window * [0]
+        train_label = list(input_data.supply[i:i+tw-output_window]) + list(input_data.iloc[i+tw, 1:]) + list(input_data.supply[i+tw-output_window:i+tw])
         #train_label = input_data[i+output_window:i+tw+output_window]
+        train_seq = np.array(train_seq)
+        train_label = np.array(train_label)
         inout_seq.append((train_seq, train_label))
     return torch.FloatTensor(inout_seq)
-
 
 def get_data(type, input_window, output_window):
 
@@ -122,47 +123,52 @@ def get_data(type, input_window, output_window):
     series['dow'] = series.date.dt.day_of_week
     series = pd.get_dummies(series, columns=['year', 'month', 'dow'])
     # series = series.drop(['type','year','month','day'], axis=1)
-    series = series.drop(['date', 'type', 'day'], axis=1)
-    scaler = MinMaxScaler(feature_range=(-1, 1)) 
+    series = series.drop(['type', 'day'], axis=1)
+    scaler = MinMaxScaler() 
     amplitude = scaler.fit_transform(series.supply.to_numpy().reshape(-1, 1)).reshape(-1)
     series['supply'] = amplitude
     feature_num = len(series.columns)
     #amplitude = scaler.fit_transform(amplitude.reshape(-1, 1)).reshape(-1)
     amplitude = series.to_numpy().reshape(-1, 1).reshape(-1)
-    print(len(amplitude), len(series), feature_num)
-    sampels = int(len(amplitude) * 0.8)
-    input_window *= feature_num
-    output_window *= feature_num
 
-    train_data = amplitude[:sampels]
-    test_data = amplitude[sampels:]
+    sampels = int(len(series) * 0.8)
+
+    train_data = series[:sampels]
+    train_date = [ts for _, ts in train_data.date.items()]
+    train_data.drop(['date'], axis=1, inplace=True)
+    test_data = series[sampels:]
+    test_date = [ts for _, ts in test_data.date.items()]
+    test_data.drop(['date'], axis=1, inplace=True)
     # convert our train data into a pytorch train tensor
     #train_tensor = torch.FloatTensor(train_data).view(-1)
     # todo: add comment.. 
-    train_sequence = create_input_sequences(train_data, input_window, output_window)
+    tw = input_window + output_window
+    train_sequence = create_input_sequences(train_data, tw, output_window)
     train_sequence = train_sequence[:-output_window] #todo: fix hack?
+    train_date = train_date[len(train_data) - tw:]
 
     #test_data = torch.FloatTensor(test_data).view(-1) 
-    test_data = create_input_sequences(test_data, input_window, output_window)
+    test_data = create_input_sequences(test_data, tw, output_window)
     test_data = test_data[:-output_window] #todo: fix hack?
-    print(train_sequence)
-    return train_sequence.to(device), test_data.to(device), scaler, feature_num
+    test_date = test_date[len(test_data) - tw:]
 
-def get_batch(source, i, batch_size, input_window):
+    return train_sequence, train_date, test_data, test_date, scaler, feature_num
+
+def get_batch(source, i, batch_size, window):
     seq_len = min(batch_size, len(source) - 1 - i)
     data = source[i:i+seq_len]
-    input = torch.stack(torch.stack([item[0] for item in data]).chunk(input_window,1)) # 1 is feature size
-    target = torch.stack(torch.stack([item[1] for item in data]).chunk(input_window,1))
+    input = torch.stack(torch.stack([item[0] for item in data]).chunk(window,1)) # 1 is feature size
+    target = torch.stack(torch.stack([item[1] for item in data]).chunk(window,1))
     return input, target
 
 
-def train(model, train_data, type, epoch, optimizer, scheduler, criterion, batch_size, input_window, output_window, RESULT_TXT_PATH):
+def train(model, train_data, type, epoch, optimizer, scheduler, criterion, batch_size, window, output_window, RESULT_TXT_PATH):
     model.train() # Turn on the train mode
     total_loss = 0.
     start_time = time.time()
 
     for batch, i in enumerate(range(0, len(train_data) - 1, batch_size)):
-        data, targets = get_batch(train_data, i, batch_size, input_window)
+        data, targets = get_batch(train_data, i, batch_size, window)
         optimizer.zero_grad()
         output = model(data)
 
@@ -190,8 +196,21 @@ def train(model, train_data, type, epoch, optimizer, scheduler, criterion, batch
         
     return model, optimizer, scheduler, loss.item()
 
+def next_date(date, feature_num):
+    date = date + pd.DateOffset(days=1)
+    year = date.year % 2000
+    month = date.month
+    dow = date.weekday()
+    year = year + feature_num - (26 + 13)
+    date_list = [0.] * feature_num
+    date_list[-7 + dow] = 1.
+    date_list[-7 - 12 + month] = 1.
+    date_list[year] = 1.
 
-def predict_future(eval_models, data_source_list, epoch, steps, input_window, output_window, RESULT_TXT_PATH, RESULT_PATH):
+    return date, torch.FloatTensor(date_list).reshape(-1, 1, 1)
+
+
+def predict_future(eval_models, data_source_list, epoch, steps, window, output_window, RESULT_TXT_PATH, RESULT_PATH):
     mse = nn.MSELoss()
     mae = nn.L1Loss()
 
@@ -200,45 +219,48 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
     
     pyplot.figure(figsize=(20, 10))
     sub_num = 421
-    for data_source, type, scaler, feature_num in data_source_list:
+    for data_source, data_date, type, scaler, feature_num in data_source_list:
         eval_model, _, _ = eval_models[type]
         eval_model.eval()
-        print(data_source.shape)
-        _ , data = get_batch(data_source, 0,1, input_window)
+        _ , data = get_batch(data_source, 0,1, window)
+        date = data_date[-output_window]
+        date = pd.to_datetime(date)
 
+        predict = []
         with torch.no_grad():
-            for i in range(0, steps,1):
-                input = torch.clone(data[-input_window:])
+            for i in range(0, steps, 1):
+                input = torch.clone(data[-window:])
+                data = data.to(device)
                 input[-output_window:] = 0     
-                output = eval_model(data[-input_window:])                        
-                data = torch.cat((data, output[-feature_num:]))
+                output = eval_model(data[-window:])
+                predict.append(output[-output_window:].squeeze().cpu())
+                date, date_list = next_date(date, feature_num)
+                data = torch.cat((data[:(-output_window-feature_num)], output[-output_window:], date_list.to(device)))
                 
         data = data.cpu().view(-1)
-        print(data_source[0])
-        true_future = np.array([data_source[i][1][0].cpu() for i in range(steps + input_window // feature_num)])
-        # true_future = data_source[:input_window + steps * feature_num:feature_num][1].cpu().view(-1)
-        # true_val = list(data[:input_window]) + list(true_future)
+        data = np.array((list(data[-output_window-feature_num:].cpu()) + predict))
+        true_future = np.array([data_source[i][1][0].cpu() for i in range(steps + window)])
+
         true_val = true_future
-        true_future = true_future[steps:]
+        true_future = true_future[-steps:]
         
-        data_tensor = torch.Tensor(data[steps * feature_num::feature_num])
+        data_tensor = torch.Tensor(predict)
         data_true_future = torch.Tensor(true_future)
 
-        print(true_future.shape, data_tensor.shape)
         mse_score = mse(data_tensor, data_true_future.squeeze())
         mae_score = mae(data_tensor, data_true_future.squeeze())
 
         total_mse += mae_score
         total_mae += mae_score
 
-        data = scaler.inverse_transform(data[steps * feature_num::feature_num].reshape(-1, 1))
+        data = scaler.inverse_transform(data[-steps:].reshape(-1, 1))
         true_val = scaler.inverse_transform(np.array(true_val).reshape(-1, 1))
 
         with open(RESULT_TXT_PATH, 'a') as f:
             f.write(f"{type} {epoch} epochs - mse: {mse_score}, mae: {mae_score}\n")
         pyplot.subplot(sub_num)
-        pyplot.plot(true_val,color="red", label="true")
-        pyplot.plot(range(input_window // feature_num, input_window // feature_num + steps), data[input_window // feature_num:],color="blue", label='predictions')
+        pyplot.plot(true_val, color="red", label="true")
+        pyplot.plot(range(window - output_window, window - output_window + steps), data, color="blue", label='predictions')
         pyplot.grid(True, which='both')
         pyplot.title(type)
         pyplot.legend()
@@ -253,15 +275,21 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
         
 # entweder ist hier ein fehler im loss oder in der train methode, aber die ergebnisse sind unterschiedlich 
 # auch zu denen der predict_future
-def evaluate(eval_model, data_source, criterion, input_window, output_window):
+def evaluate(eval_model, data_source, criterion, window, output_window, feature_num):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    eval_model = eval_model.to(device)
     eval_model.eval() # Turn on the evaluation mode
     total_loss = 0.
     eval_batch_size = 1000
     total_val_len = 0
     with torch.no_grad():
         for i in range(0, len(data_source) - 1, eval_batch_size):
-            data, targets = get_batch(data_source, i, eval_batch_size, input_window)
+            data, targets = get_batch(data_source, i, eval_batch_size, window)
+            data = data.to(device)
+            targets = targets.to(device)
             output = eval_model(data)
+            targets = targets[::feature_num]
+            output = output[::feature_num]
             if calculate_loss_over_all_values:
                 total_loss += len(data[0])* criterion(output, targets).cpu().item()
             else:                                
@@ -285,7 +313,7 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
 
     best_val_loss = float("inf")
     epochs = epochs # The number of epochs
-    log_epoch = 1
+    log_epoch = 100
     best_model = None
     pred_step = 180
 
@@ -312,15 +340,15 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
     train_data_list = []
     val_data_list = []
 
-    for type_name in type_list[:1]:
-        train_data, val_data, scaler, feature_num = get_data(type_name, input_window, output_window)
-        train_data_list.append((train_data, type_name, scaler, feature_num))
-        val_data_list.append((val_data, type_name, scaler, feature_num))
+    for type_name in type_list:
+        train_data, train_date, val_data, test_date, scaler, feature_num = get_data(type_name, input_window, output_window)
+        train_data_list.append((train_data, train_date, type_name, scaler, feature_num))
+        val_data_list.append((val_data, test_date, type_name, scaler, feature_num))
 
     criterion = nn.MSELoss()
 
 
-    models = {type:[TransAm(feature_size=feature_size, num_layers=num_layers, dropout=dropout).to(device)] for _, type, _, _ in train_data_list}
+    models = {type:[TransAm(feature_size=feature_size, num_layers=num_layers, dropout=dropout)] for _, _, type, _, _ in train_data_list}
 
     for t in models:
         model = models[t][0]
@@ -333,23 +361,24 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
     val_losses = []
     num_types = len(train_data_list)
 
-    for epoch in tqdm(range(1, epochs + 1)):
+    for epoch in range(1, epochs + 1):
         epoch_start_time = time.time()
         total_train_loss = 0
         total_val_loss = 0
 
-        for train_data, type, scaler, feature_num in train_data_list:
+        for train_data, _, type, scaler, feature_num in train_data_list:
             model, optimizer, scheduler = models[type]
-            model, optimizer, scheduler, loss = train(model,
-                                                      train_data,
+            window = input_window + output_window + feature_num
+            model, optimizer, scheduler, loss = train(model.to(device),
+                                                      train_data.to(device),
                                                       type,
                                                       epoch,
                                                       optimizer,
                                                       scheduler,
                                                       criterion,
                                                       batch_size,
-                                                      input_window * feature_num,
-                                                      output_window * feature_num,
+                                                      window,
+                                                      output_window,
                                                       RESULT_TXT_PATH)
             models[type] = model, optimizer, scheduler
             total_train_loss += loss
@@ -361,8 +390,8 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
             predict_future(models,
                            val_data_list, epoch,
                            pred_step,
-                           input_window * feature_num,
-                           output_window * feature_num,
+                           window,
+                           output_window,
                            RESULT_TXT_PATH,
                            RESULT_PATH)
             # save loss graph
@@ -374,9 +403,9 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
             pyplot.close()
 
 
-        for val_data, type, scaler, feature_num in val_data_list:
+        for val_data, val_date, type, scaler, feature_num in val_data_list:
             model, optimizer, scheduler = models[type]
-            val_loss = evaluate(model, val_data, criterion, input_window, output_window)
+            val_loss = evaluate(model, val_data, criterion, window, output_window, feature_num)
             total_val_loss += val_loss
         val_losses.append(total_val_loss / num_types)
 

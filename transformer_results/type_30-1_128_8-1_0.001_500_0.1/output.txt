@@ -1,1 +1,0 @@
-A | epoch   1 |    69/  349 batches | lr 0.001000 | 62.87 ms | loss 0.12395 | ppl     1.13

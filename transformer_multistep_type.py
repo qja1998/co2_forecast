@@ -117,7 +117,7 @@ def get_data(type, input_window, output_window):
     series = series.loc[series.type == type]
     series = series.drop(['type','year','month','day'], axis=1)
     from sklearn.preprocessing import MinMaxScaler
-    scaler = MinMaxScaler(feature_range=(-1, 1)) 
+    scaler = MinMaxScaler() 
     amplitude = scaler.fit_transform(series.to_numpy().reshape(-1, 1)).reshape(-1)
     #amplitude = scaler.fit_transform(amplitude.reshape(-1, 1)).reshape(-1)
     
