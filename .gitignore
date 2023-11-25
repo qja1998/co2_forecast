@@ -1,0 +1,12 @@
+*.csv
+*.pt
+*.xlsx
+*.zip
+*.pdf
+*.png
+*.gif
+household_power_consumption.txt
+.vscode
+.ipynb_checkpoints
+wandb
+__pycache__
