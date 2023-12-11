@@ -322,10 +322,11 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
     lr = lr
     dropout = dropout
 
-    RESULT_PATH = f"./transformer_results/type_{input_window}-{output_window}_{batch_size}_{feature_size}-{num_layers}_{lr}_{epochs}_{dropout}"
+    RESULT_PATH = f"./transformer_results/date_feat/type_{input_window}-{output_window}_{batch_size}_{feature_size}-{num_layers}_{lr}_{epochs}_{dropout}"
     RESULT_TXT_PATH = RESULT_PATH + "/output.txt"
 
     if not os.path.isdir(RESULT_PATH):
+        os.mkdir("./transformer_results/date_feat")
         os.mkdir(RESULT_PATH)
     if not os.path.isdir(RESULT_PATH + f"/future{pred_step}"):
         os.mkdir(RESULT_PATH + f"/future{pred_step}")

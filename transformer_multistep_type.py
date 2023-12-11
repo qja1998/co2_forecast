@@ -8,9 +8,9 @@ import time
 import math
 import random
 from matplotlib import pyplot
+import wandb
 
-
-# from pytorch_forecasting.metrics.point import SMAPE
+from torchmetrics.regression import SymmetricMeanAbsolutePercentageError as SMAPE
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -19,7 +19,6 @@ torch.cuda.manual_seed_all(0)
 cudnn.benchmark = False
 cudnn.deterministic = True
 random.seed(0)
-
 
 if torch.cuda.is_available(): device = torch.device("cuda")
 elif torch.backends.mps.is_available(): device = torch.device("mps")
@@ -61,13 +60,13 @@ class PositionalEncoding(nn.Module):
        
 
 class TransAm(nn.Module):
-    def __init__(self,feature_size=256,num_layers=3,dropout=0.1):
+    def __init__(self,feature_size=256,num_layers=3,d_ff=2048,dropout=0.1):
         super(TransAm, self).__init__()
         self.model_type = 'Transformer'
         
         self.src_mask = None
         self.pos_encoder = PositionalEncoding(feature_size)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dropout=dropout)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dim_feedforward=d_ff, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)        
         self.decoder = nn.Linear(feature_size,1)
         self.init_weights()
@@ -129,11 +128,11 @@ def get_data(type, input_window, output_window):
     # convert our train data into a pytorch train tensor
     #train_tensor = torch.FloatTensor(train_data).view(-1)
     # todo: add comment.. 
-    train_sequence = create_input_sequences(train_data, input_window, output_window)
+    train_sequence = create_input_sequences(train_data, input_window + output_window, output_window)
     train_sequence = train_sequence[:-output_window] #todo: fix hack?
 
     #test_data = torch.FloatTensor(test_data).view(-1) 
-    test_data = create_input_sequences(test_data, input_window, output_window)
+    test_data = create_input_sequences(test_data, input_window + output_window, output_window)
     test_data = test_data[:-output_window] #todo: fix hack?
 
     return train_sequence.to(device), test_data.to(device), scaler
@@ -152,7 +151,7 @@ def train(model, train_data, type, epoch, optimizer, scheduler, criterion, batch
     start_time = time.time()
 
     for batch, i in enumerate(range(0, len(train_data) - 1, batch_size)):
-        data, targets = get_batch(train_data, i, batch_size, input_window)
+        data, targets = get_batch(train_data, i, batch_size, input_window + output_window)
         optimizer.zero_grad()
         output = model(data)
 
@@ -184,9 +183,11 @@ def train(model, train_data, type, epoch, optimizer, scheduler, criterion, batch
 def predict_future(eval_models, data_source_list, epoch, steps, input_window, output_window, RESULT_TXT_PATH, RESULT_PATH):
     mse = nn.MSELoss()
     mae = nn.L1Loss()
+    smape = SMAPE()
 
     total_mse = 0
     total_mae = 0
+    total_smape = 0
     
     pyplot.figure(figsize=(20, 10))
     sub_num = 421
@@ -194,7 +195,7 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
         eval_model, _, _ = eval_models[type]
         eval_model.eval()
 
-        _ , data = get_batch(data_source, 0,1, input_window)
+        _ , data = get_batch(data_source, 0,1, input_window + output_window)
 
         with torch.no_grad():
             for i in range(0, steps,1):
@@ -202,18 +203,21 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
                 input[-output_window:] = 0     
                 output = eval_model(data[-input_window:])                        
                 data = torch.cat((data, output[-1:]))
-                
-        data = data.cpu().view(-1)
-        true_future = data_source[input_window][1].cpu().view(-1)
-        true_val = list(data[:input_window]) + list(true_future)
         
-        data_tensor = torch.Tensor(data[steps:])
+        true_val_len = steps + input_window
+        data = data.cpu().view(-1)
+        true_future = np.array([data_source[i][1][0].cpu() for i in range(true_val_len)])
+        true_val = np.array([data_source[i][1][0].cpu() for i in range(true_val_len)])
+        
+        data_tensor = torch.Tensor(data[-steps:])
         data_true_future = torch.Tensor(true_future)
-        mse_score = mse(data_tensor, data_true_future.squeeze())
-        mae_score = mae(data_tensor, data_true_future.squeeze())
+        mse_score = mse(data_tensor, data_true_future[-steps:].squeeze())
+        mae_score = mae(data_tensor, data_true_future[-steps:].squeeze())
+        smape_score = smape(data_tensor, data_true_future[-steps:].squeeze())
 
-        total_mse += mae_score
+        total_mse += mse_score
         total_mae += mae_score
+        total_smape += smape_score
 
         data = scaler.inverse_transform(data.reshape(-1, 1))
         true_val = scaler.inverse_transform(np.array(true_val).reshape(-1, 1))
@@ -222,15 +226,19 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
             f.write(f"{type} {epoch} epochs - mse: {mse_score}, mae: {mae_score}\n")
         pyplot.subplot(sub_num)
         pyplot.plot(true_val,color="red", label="true")
-        pyplot.plot(range(input_window, input_window + steps), data[input_window:],color="blue", label='predictions')
+        pyplot.plot(range(input_window, input_window + steps), data[-steps:],color="blue", label='predictions')
         pyplot.grid(True, which='both')
         pyplot.title(type)
         pyplot.legend()
+
+        wandb.log({f"pred_{type}": data_tensor, f"true_{type}": data_true_future[-steps:]})
+
         sub_num += 1
 
     num_types = len(data_source_list)
     with open(RESULT_TXT_PATH, 'a') as f:
-        f.write(f"Total {epoch} epochs - mse: {total_mse / num_types}, mae: {total_mae / num_types}")
+        f.write(f"Total {epoch} epochs - mse: {total_mse / num_types}, mae: {total_mae / num_types}, sampe: {smape_score / num_types}\n")
+        wandb.log({"pred_MSE": total_mse / num_types, "pred_MAE": total_mae / num_types, 'pred_SMAPE' : smape_score / num_types})
 
     pyplot.savefig(RESULT_PATH + '/future%d/transformer-future%d.png'%(steps, epoch))
     pyplot.close()
@@ -244,7 +252,7 @@ def evaluate(eval_model, data_source, criterion, input_window, output_window):
     total_val_len = 0
     with torch.no_grad():
         for i in range(0, len(data_source) - 1, eval_batch_size):
-            data, targets = get_batch(data_source, i, eval_batch_size, input_window)
+            data, targets = get_batch(data_source, i, eval_batch_size, input_window + output_window)
             output = eval_model(data)
             if calculate_loss_over_all_values:
                 total_loss += len(data[0])* criterion(output, targets).cpu().item()
@@ -260,7 +268,7 @@ def evaluate(eval_model, data_source, criterion, input_window, output_window):
 # model = TransAm(feature_size=feature_size, num_layers=num_layers).to(device)
 
 
-def train_start(input_window, output_window, batch_size, epochs, feature_size, num_layers, lr, dropout, is_save=False):
+def train_start(input_window, output_window, batch_size, epochs, feature_size, d_ff, num_layers, lr, dropout=0.1, is_save=False):
     # Set parameters
     input_window = input_window
     output_window = output_window
@@ -269,16 +277,17 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
 
     best_val_loss = float("inf")
     epochs = epochs # The number of epochs
-    log_epoch = 50
+    log_epoch = 25
     best_model = None
     pred_step = 180
 
     feature_size = feature_size
     num_layers = num_layers
+    d_ff = d_ff
     lr = lr
     dropout = dropout
 
-    RESULT_PATH = f"./transformer_results/type_{input_window}-{output_window}_{batch_size}_{feature_size}-{num_layers}_{lr}_{epochs}_{dropout}"
+    RESULT_PATH = f"./transformer_results/type_{input_window}-{output_window}_{batch_size}_{feature_size}-{d_ff}-{num_layers}_{lr}_{epochs}_{dropout}"
     RESULT_TXT_PATH = RESULT_PATH + "/output.txt"
 
     if not os.path.isdir(RESULT_PATH):
@@ -289,6 +298,19 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
         os.mkdir(RESULT_PATH + f"/models")
     with open(RESULT_TXT_PATH, 'w') as f:
         f.write('')
+
+    wandb.init(
+        # set the wandb project where this run will be logged
+        project="co2 emission forecasting",
+        
+        # track hyperparameters and run metadata
+        config={
+        "learning_rate": lr,
+        "epochs": epochs,
+        }
+    )
+    wandb.run.name = RESULT_PATH.split('/')[-1]
+    wandb.run.save()
 
     # make dataset
 
@@ -304,7 +326,7 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
     criterion = nn.MSELoss()
 
 
-    models = {type:[TransAm(feature_size=feature_size, num_layers=num_layers, dropout=dropout).to(device)] for _, type, _ in train_data_list}
+    models = {type:[TransAm(feature_size=feature_size, num_layers=num_layers, d_ff=d_ff, dropout=dropout).to(device)] for _, type, _ in train_data_list}
 
     for t in models:
         model = models[t][0]
@@ -361,14 +383,16 @@ def train_start(input_window, output_window, batch_size, epochs, feature_size, n
         for val_data, type, scaler in val_data_list:
             model, optimizer, scheduler = models[type]
             val_loss = evaluate(model, val_data, criterion, input_window, output_window)
+            wandb.log({f"val_loss_{type}": val_loss})
             total_val_loss += val_loss
         val_losses.append(total_val_loss / num_types)
-
+        total_train_loss = total_val_loss / num_types
         with open(RESULT_TXT_PATH, 'a') as f:
             f.write('-' * 89 + '\n')
             f.write('| end of epoch {:3d} | time: {:5.2f}s | valid loss(mse) {:5.5f} | valid ppl {:8.2f}\n'.format(epoch, (time.time() - epoch_start_time),
-                                            val_loss, math.exp(val_loss)))
+                                            total_train_loss, math.exp(total_train_loss)))
             f.write('-' * 89 + '\n')
+            wandb.log({"val_loss_total": total_train_loss})
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss

@@ -10,3 +10,6 @@ household_power_consumption.txt
 .ipynb_checkpoints
 wandb
 __pycache__
+transformer_results
+transformer-time-series-prediction-master
+DILATELoss

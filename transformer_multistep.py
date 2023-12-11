@@ -8,7 +8,7 @@ import time
 import math
 import random
 from matplotlib import pyplot
-
+import wandb
 
 # from pytorch_forecasting.metrics.point import SMAPE
 
@@ -44,20 +44,20 @@ calculate_loss_over_all_values = False
 # Set parameters
 input_window = 180
 output_window = 1
-batch_size = 256 # batch size
+batch_size = 32 # batch size
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 best_val_loss = float("inf")
-epochs = 200 # The number of epochs
+epochs = 300 # The number of epochs
 log_epoch = 50
 best_model = None
 pred_step = 180
 
-feature_size=128
+feature_size=1024
 num_layers=1
 lr = 1e-2
 
-RESULT_PATH = f"./transformer_results/{input_window}-{output_window}_{batch_size}_{feature_size}-{num_layers}_{lr}_{epochs}"
+RESULT_PATH = f"./transformer_results/single_model/{input_window}-{output_window}_{batch_size}_{feature_size}-{num_layers}_{lr}_{epochs}"
 RESULT_TXT_PATH = RESULT_PATH + "/output.txt"
 
 if not os.path.isdir(RESULT_PATH):
@@ -91,7 +91,7 @@ class TransAm(nn.Module):
         
         self.src_mask = None
         self.pos_encoder = PositionalEncoding(feature_size)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=16, dropout=dropout)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)        
         self.decoder = nn.Linear(feature_size,1)
         self.init_weights()
@@ -283,6 +283,7 @@ def predict_future(eval_model, data_source_list, steps):
 
         with open(RESULT_TXT_PATH, 'a') as f:
             f.write(f"{type} {epoch} epochs - mse: {mse_score}, mae: {mae_score}")
+        wandb.log({'epoch': epoch, 'mse_score': mse_score, 'mae_score': mae_score})
         pyplot.subplot(sub_num)
         pyplot.plot(true_val,color="red", label="true")
         pyplot.plot(range(input_window, input_window + steps), data[input_window:],color="blue", label='predictions')
@@ -317,6 +318,19 @@ def evaluate(eval_model, data_source_list):
             total_val_len += len(data_source)
     return total_loss / total_val_len
 
+
+wandb.init(
+        # set the wandb project where this run will be logged
+        project="co2 emission forecasting",
+        
+        # track hyperparameters and run metadata
+        config={
+        "learning_rate": lr,
+        "epochs": epochs,
+        }
+    )
+wandb.run.name = RESULT_PATH.split('/')[-1]
+wandb.run.save()
 
 # make dataset
 
@@ -373,7 +387,7 @@ for epoch in tqdm(range(1, epochs + 1)):
         f.write('| end of epoch {:3d} | time: {:5.2f}s | valid loss(mse) {:5.5f} | valid ppl {:8.2f}\n'.format(epoch, (time.time() - epoch_start_time),
                                         val_loss, math.exp(val_loss)))
         f.write('-' * 89 + '\n')
-
+    wandb.log({'epoch': epoch, 'val_loss': val_loss})
     if val_loss < best_val_loss:
         best_val_loss = val_loss
         best_model = model
