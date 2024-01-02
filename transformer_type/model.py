@@ -33,14 +33,14 @@ class PositionalEncoding(nn.Module):
        
 
 class TransAm(nn.Module):
-    def __init__(self,feature_size=256,num_layers=3,d_ff=2048,dropout=0.1):
+    def __init__(self,feature_size=256,num_layers=3,d_ff=2048,dropout=0.1, output_size=1):
         super(TransAm, self).__init__()
         
         self.src_mask = None
         self.pos_encoder = PositionalEncoding(feature_size)
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dim_feedforward=d_ff, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)        
-        self.decoder = nn.Linear(feature_size,1)
+        self.decoder = nn.Linear(feature_size, output_size)
         self.init_weights()
 
     def init_weights(self):
@@ -107,21 +107,29 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
     total_mse = 0
     total_mae = 0
     total_smape = 0
+
+    origin_step = steps
     
     pyplot.figure(figsize=(20, 10))
-    sub_num = 421
+    sub_num = 1
     for data_source, type, scaler in data_source_list:
+        steps = origin_step
+
         eval_model, _, _ = eval_models[type]
         eval_model.eval()
 
-        _ , data = get_batch(data_source, 0,1, input_window + output_window)
+        _ , data = get_batch(data_source, 0, 1, input_window + output_window)
 
         with torch.no_grad():
-            for i in range(0, steps, 1):
-                input = torch.clone(data[-input_window:])
-                input[-output_window:] = 0     
-                output = eval_model(data[-input_window:])                        
-                data = torch.cat((data, output[-1:]))
+            if steps == 1:
+                data = eval_model(data[-input_window:])
+                steps = output_window
+                
+            else:
+                for i in range(0, steps):
+                    output = eval_model(data[-input_window:])
+                    data = torch.cat((data, output[-1:]))
+                
         
         true_val_len = steps + input_window
         data = data.cpu().view(-1)
@@ -134,7 +142,7 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
         mae_score = mae(data_tensor, data_true_future[-steps:].squeeze())
         smape_score = smape(data_tensor, data_true_future[-steps:].squeeze())
 
-        total_mse += mae_score
+        total_mse += mse_score
         total_mae += mae_score
         total_smape += smape_score
 
@@ -143,7 +151,7 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
 
         with open(RESULT_TXT_PATH, 'a') as f:
             f.write(f"{type} {epoch} epochs - mse: {mse_score}, mae: {mae_score}\n")
-        pyplot.subplot(sub_num)
+        pyplot.subplot(5, 2, sub_num)
         pyplot.plot(true_val,color="red", label="true")
         pyplot.plot(range(input_window, input_window + steps), data[-steps:],color="blue", label='predictions')
         pyplot.grid(True, which='both')

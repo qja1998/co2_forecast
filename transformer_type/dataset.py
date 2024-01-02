@@ -15,19 +15,13 @@ def _create_input_sequences(input_data, tw, output_window):
         inout_seq.append((train_seq ,train_label))
     return torch.FloatTensor(inout_seq)
 
-def get_data(type, input_window, output_window):
+def get_data(df, input_window, output_window):
     time        = np.arange(0, 400, 0.1)
     #amplitude   = np.sin(time) + np.sin(time*0.05) +np.sin(time*0.12) *np.random.normal(-0.2, 0.2, len(time))
     
-    from pandas import read_csv
-    series = read_csv('data/korea/kor_gas_day.csv', header=0, index_col=0)
-    series = series.loc[series.type == type]
-    series = series.drop(['type','year','month','day'], axis=1)
     from sklearn.preprocessing import MinMaxScaler
     scaler = MinMaxScaler() 
-    amplitude = scaler.fit_transform(series.to_numpy().reshape(-1, 1)).reshape(-1)
-    #amplitude = scaler.fit_transform(amplitude.reshape(-1, 1)).reshape(-1)
-    
+    amplitude = scaler.fit_transform(df.to_numpy().reshape(-1, 1)).reshape(-1)
     
     sampels = int(len(amplitude) * 0.8)
     train_data = amplitude[:sampels]

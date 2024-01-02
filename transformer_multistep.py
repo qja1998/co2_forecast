@@ -42,20 +42,20 @@ calculate_loss_over_all_values = False
 #print(out)
 
 # Set parameters
-input_window = 180
+input_window = 120
 output_window = 1
-batch_size = 32 # batch size
+batch_size = 64 # batch size
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 best_val_loss = float("inf")
-epochs = 300 # The number of epochs
+epochs = 200 # The number of epochs
 log_epoch = 50
 best_model = None
-pred_step = 180
+pred_step = 120
 
-feature_size=1024
-num_layers=1
-lr = 1e-2
+feature_size=32
+num_layers=2
+lr = 1e-5
 
 RESULT_PATH = f"./transformer_results/single_model/{input_window}-{output_window}_{batch_size}_{feature_size}-{num_layers}_{lr}_{epochs}"
 RESULT_TXT_PATH = RESULT_PATH + "/output.txt"
@@ -91,7 +91,7 @@ class TransAm(nn.Module):
         
         self.src_mask = None
         self.pos_encoder = PositionalEncoding(feature_size)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dropout=dropout)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dim_feedforward=512, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)        
         self.decoder = nn.Linear(feature_size,1)
         self.init_weights()
@@ -319,7 +319,8 @@ def evaluate(eval_model, data_source_list):
     return total_loss / total_val_len
 
 
-wandb.init(
+if __name__ == '__main__':
+    wandb.init(
         # set the wandb project where this run will be logged
         project="co2 emission forecasting",
         
@@ -329,75 +330,74 @@ wandb.init(
         "epochs": epochs,
         }
     )
-wandb.run.name = RESULT_PATH.split('/')[-1]
-wandb.run.save()
+    wandb.run.name = RESULT_PATH.split('/')[-1]
+    wandb.run.save()
 
-# make dataset
+    # make dataset
 
-train_data, val_data, scaler0 = get_data('I')
-train_data1, val_data1, scaler1 = get_data('A')
-train_data2, val_data2, scaler2 = get_data('B')
-train_data3, val_data3, scaler3 = get_data('C')
-train_data4, val_data4, scaler4 = get_data('D')
-train_data5, val_data5, scaler5 = get_data('E')
-train_data6, val_data6, scaler6 = get_data('G')
-train_data7, val_data7, scaler7 = get_data('H')
+    train_data1, val_data1, scaler1 = get_data('A')
+    train_data2, val_data2, scaler2 = get_data('B')
+    train_data3, val_data3, scaler3 = get_data('C')
+    train_data4, val_data4, scaler4 = get_data('D')
+    train_data5, val_data5, scaler5 = get_data('E')
+    train_data6, val_data6, scaler6 = get_data('G')
+    train_data7, val_data7, scaler7 = get_data('H')
 
-train_data_list = ((train_data, 'I', scaler0),
-                (train_data1, 'A', scaler1),
-                (train_data2, 'B', scaler2),
-                (train_data3, 'C', scaler3),
-                (train_data4, 'D', scaler4),
-                (train_data5, 'E', scaler5),
-                (train_data6, 'G', scaler6),
-                (train_data7, 'H', scaler7)
-                )
+    train_data_list = ((train_data1, 'A', scaler1),
+                    (train_data2, 'B', scaler2),
+                    (train_data3, 'C', scaler3),
+                    (train_data4, 'D', scaler4),
+                    (train_data5, 'E', scaler5),
+                    (train_data6, 'G', scaler6),
+                    (train_data7, 'H', scaler7)
+                    )
 
-val_data_list = ((val_data, 'I', scaler0),
-                (val_data1, 'A', scaler1),
-                (val_data2, 'B', scaler2),
-                (val_data3, 'C', scaler3),
-                (val_data4, 'D', scaler4),
-                (val_data5, 'E', scaler5),
-                (val_data6, 'G', scaler6),
-                (val_data7, 'H', scaler7)
-                )
+    val_data_list = ((val_data1, 'A', scaler1),
+                    (val_data2, 'B', scaler2),
+                    (val_data3, 'C', scaler3),
+                    (val_data4, 'D', scaler4),
+                    (val_data5, 'E', scaler5),
+                    (val_data6, 'G', scaler6),
+                    (val_data7, 'H', scaler7)
+                    )
 
-# make model
-model = TransAm(feature_size=feature_size, num_layers=num_layers).to(device)
+    # make model
+    model = TransAm(feature_size=feature_size, num_layers=num_layers).to(device)
 
-criterion = nn.MSELoss()
-# optimizer = torch.optim.SGD(model.parameters(), lr=lr)
-optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.98)
+    criterion = nn.MSELoss()
+    # optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.98)
 
-for epoch in tqdm(range(1, epochs + 1)):
-    epoch_start_time = time.time()
-    for train_data, type, scaler in train_data_list:
-        train(train_data)
-    
-    if(epoch % log_epoch == 0):
-        # val_loss, mse_loss, mae_loss, smape_loss = plot_and_loss(model, val_data, epoch, scaler0)
-        predict_future(model, val_data_list, pred_step)
-    else:
-        val_loss = evaluate(model, val_data_list)
+    for epoch in tqdm(range(1, epochs + 1)):
+        epoch_start_time = time.time()
+        for train_data, type, scaler in train_data_list:
+            train(train_data)
         
-    with open(RESULT_TXT_PATH, 'a') as f:
-        f.write('-' * 89 + '\n')
-        f.write('| end of epoch {:3d} | time: {:5.2f}s | valid loss(mse) {:5.5f} | valid ppl {:8.2f}\n'.format(epoch, (time.time() - epoch_start_time),
-                                        val_loss, math.exp(val_loss)))
-        f.write('-' * 89 + '\n')
-    wandb.log({'epoch': epoch, 'val_loss': val_loss})
-    if val_loss < best_val_loss:
-        best_val_loss = val_loss
-        best_model = model
+        if(epoch % log_epoch == 0):
+            # val_loss, mse_loss, mae_loss, smape_loss = plot_and_loss(model, val_data, epoch, scaler0)
+            predict_future(model, val_data_list, pred_step)
+        else:
+            val_loss = evaluate(model, val_data_list)
+            
+        with open(RESULT_TXT_PATH, 'a') as f:
+            f.write('-' * 89 + '\n')
+            f.write('| end of epoch {:3d} | time: {:5.2f}s | valid loss(mse) {:5.5f} | valid ppl {:8.2f}\n'.format(epoch, (time.time() - epoch_start_time),
+                                            val_loss, math.exp(val_loss)))
+            f.write('-' * 89 + '\n')
+        wandb.log({'epoch': epoch, 'val_loss': val_loss})
+        if val_loss < best_val_loss:
+            best_epoch = epoch
+            best_val_loss = val_loss
+            best_model = model
 
-    scheduler.step() 
+        scheduler.step() 
 
-torch.save(model.state_dict(), f"{RESULT_PATH}/{input_window}_{batch_size}_{feature_size}-{num_layers}_{lr}_{epochs}-best_model-{best_val_loss:.5f}.pt")
+    torch.save(best_model.state_dict(), f"{RESULT_PATH}/{input_window}_{batch_size}_{feature_size}-{num_layers}_{lr}_{epochs}-best_model{best_epoch}-{best_val_loss:.5f}.pt")
+    torch.save(model.state_dict(), f"{RESULT_PATH}/{input_window}_{batch_size}_{feature_size}-{num_layers}_{lr}_{epochs}.pt")
 
-#src = torch.rand(input_window, batch_size, 1) # (source sequence length,batch size,feature number) 
-#out = model(src)
-#
-#print(out)
-#print(out.shape)
+    #src = torch.rand(input_window, batch_size, 1) # (source sequence length,batch size,feature number) 
+    #out = model(src)
+    #
+    #print(out)
+    #print(out.shape)
