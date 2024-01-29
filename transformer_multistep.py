@@ -48,7 +48,7 @@ batch_size = 64 # batch size
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 best_val_loss = float("inf")
-epochs = 200 # The number of epochs
+epochs = 100 # The number of epochs
 log_epoch = 50
 best_model = None
 pred_step = 120

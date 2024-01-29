@@ -13,8 +13,6 @@ from torchmetrics.regression import SymmetricMeanAbsolutePercentageError as SMAP
 calculate_loss_over_all_values = False
 
 
-
-
 class PositionalEncoding(nn.Module):
 
     def __init__(self, d_model, max_len=5000):
@@ -128,7 +126,7 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
             else:
                 for i in range(0, steps):
                     output = eval_model(data[-input_window:])
-                    data = torch.cat((data, output[-1:]))
+                    data = torch.cat((data[:-1], output[-1:], torch.Tensor([[[.0]]]).to(data.device)))
                 
         
         true_val_len = steps + input_window
@@ -153,7 +151,7 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
             f.write(f"{type} {epoch} epochs - mse: {mse_score}, mae: {mae_score}\n")
         pyplot.subplot(5, 2, sub_num)
         pyplot.plot(true_val,color="red", label="true")
-        pyplot.plot(range(input_window, input_window + steps), data[-steps:],color="blue", label='predictions')
+        pyplot.plot(range(input_window, input_window + steps), data[-steps-1:-1],color="blue", label='predictions')
         pyplot.grid(True, which='both')
         pyplot.title(type)
         pyplot.legend()

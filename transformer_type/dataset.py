@@ -31,11 +31,11 @@ def get_data(df, input_window, output_window):
     #train_tensor = torch.FloatTensor(train_data).view(-1)
     # todo: add comment.. 
     train_sequence = _create_input_sequences(train_data, input_window + output_window, output_window)
-    train_sequence = train_sequence[:-output_window] #todo: fix hack?
+    # train_sequence = train_sequence[:-output_window] #todo: fix hack?
 
     #test_data = torch.FloatTensor(test_data).view(-1) 
     test_data = _create_input_sequences(test_data, input_window + output_window, output_window)
-    test_data = test_data[:-output_window] #todo: fix hack?
+    # test_data = test_data[:-output_window] #todo: fix hack?
 
     return train_sequence, test_data, scaler
 
