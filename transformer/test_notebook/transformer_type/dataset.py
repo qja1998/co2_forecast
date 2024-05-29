@@ -2,7 +2,8 @@ import torch
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 
-SEP = -10
+SEP = -100
+
 # if window is 100 and prediction step is 1
 # in -> [0..99]
 # target -> [1..100]
@@ -13,14 +14,15 @@ def _create_input_sequences(input_data, tw, output_window, diff, mean_std):
     for i in range(L-tw):
         intput_seq = input_data[i:i+tw][:-output_window]
         
-        if mean_std:
-            mean_std_val = np.array([np.mean(intput_seq), SEP, np.std(intput_seq)])
-            mean_std_val = np.append(mean_std_val, np.array([SEP]))
-            train_seq = np.append(mean_std_val, intput_seq)
         if diff:
             diff_seq = np.append(np.diff(intput_seq), np.array([SEP]))
             train_seq = np.append(diff_seq, intput_seq)
         
+        if mean_std:
+            mean_std_val = np.array([np.mean(intput_seq), SEP, np.std(intput_seq)])
+            mean_std_val = np.append(mean_std_val, np.array([SEP]))
+            train_seq = np.append(mean_std_val, train_seq)
+
         #train_label = input_data[i+output_window:i+tw+output_window]
         train_label = np.append(train_seq, input_data[i:i+tw][-output_window:])
         train_seq = np.append(train_seq , output_window * [0])
