@@ -33,7 +33,9 @@ def train_start(train_data_list,
                 lr,
                 device,
                 dropout=0.1,
-                is_save=False):
+                is_save=False,
+                diff=None,
+                mean_std=None):
     # Set parameters
     input_window = input_window
     output_window = 1
@@ -50,7 +52,7 @@ def train_start(train_data_list,
     lr = lr
     dropout = dropout
 
-    RESULT_PATH = f"./transformer_results/type_{input_window}-{pred_step}_{batch_size}_{feature_size}-{d_ff}-{num_layers}_{lr}_{epochs}_{dropout}"
+    RESULT_PATH = f"./transformer_results/type_{input_window}-{pred_step}_{batch_size}_{feature_size}-{d_ff}-{num_layers}_{lr}_{epochs}_{dropout}_{diff}_{mean_std}"
     RESULT_TXT_PATH = RESULT_PATH + "/output.txt"
 
     if not os.path.isdir(RESULT_PATH):

@@ -1,27 +1,37 @@
 import torch
 import numpy as np
+from sklearn.preprocessing import MinMaxScaler
 
-
+SEP = -10
 # if window is 100 and prediction step is 1
 # in -> [0..99]
 # target -> [1..100]
-def _create_input_sequences(input_data, tw, output_window):
+def _create_input_sequences(input_data, tw, output_window, diff, mean_std):
     inout_seq = []
     L = len(input_data)
     for i in range(L-tw):
-        train_seq = np.append(input_data[i:i+tw][:-output_window] , output_window * [0])
-        train_label = input_data[i:i+tw]
+        intput_seq = input_data[i:i+tw][:-output_window]
+        
+        
+        if diff:
+            diff_seq = np.append(np.array([SEP]), np.diff(intput_seq))
+            train_seq = np.append(intput_seq , diff_seq)
+        if mean_std:
+            mean_std_val = np.array([np.mean(intput_seq), SEP, np.std(intput_seq)])
+            mean_std_val = np.append(np.array([SEP]), mean_std_val)
+            train_seq = np.append(intput_seq , mean_std_val)
         #train_label = input_data[i+output_window:i+tw+output_window]
+        train_label = np.append(train_seq, input_data[i:i+tw][-output_window:])
+        train_seq = np.append(train_seq , output_window * [0])
         inout_seq.append((train_seq ,train_label))
     return torch.FloatTensor(inout_seq)
 
-def get_data(df, input_window, output_window):
+def get_data(df, input_window, output_window, diff=False, mean_std=False):
     time        = np.arange(0, 400, 0.1)
     #amplitude   = np.sin(time) + np.sin(time*0.05) +np.sin(time*0.12) *np.random.normal(-0.2, 0.2, len(time))
-    
-    from sklearn.preprocessing import MinMaxScaler
-    scaler = MinMaxScaler() 
-    amplitude = scaler.fit_transform(df.to_numpy().reshape(-1, 1)).reshape(-1)
+    df = df.to_numpy().reshape(-1, 1)
+    scaler = MinMaxScaler()
+    amplitude = scaler.fit_transform(df).reshape(-1)
     
     sampels = int(len(amplitude) * 0.8)
     train_data = amplitude[:sampels]
@@ -30,11 +40,11 @@ def get_data(df, input_window, output_window):
     # convert our train data into a pytorch train tensor
     #train_tensor = torch.FloatTensor(train_data).view(-1)
     # todo: add comment.. 
-    train_sequence = _create_input_sequences(train_data, input_window + output_window, output_window)
+    train_sequence = _create_input_sequences(train_data, input_window + output_window, output_window, diff, mean_std)
     # train_sequence = train_sequence[:-output_window] #todo: fix hack?
 
     #test_data = torch.FloatTensor(test_data).view(-1) 
-    test_data = _create_input_sequences(test_data, input_window + output_window, output_window)
+    test_data = _create_input_sequences(test_data, input_window + output_window, output_window, diff, mean_std)
     # test_data = test_data[:-output_window] #todo: fix hack?
 
     return train_sequence, test_data, scaler

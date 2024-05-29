@@ -33,7 +33,7 @@ class PositionalEncoding(nn.Module):
 class TransAm(nn.Module):
     def __init__(self,feature_size=256,num_layers=3,d_ff=2048,dropout=0.1, output_size=1):
         super(TransAm, self).__init__()
-        
+
         self.src_mask = None
         self.pos_encoder = PositionalEncoding(feature_size)
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dim_feedforward=d_ff, dropout=dropout)
@@ -61,6 +61,55 @@ class TransAm(nn.Module):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
+
+# class TransAm(nn.Module):
+#     def __init__(self, num_tokens, dim_model, num_heads, num_encoder_layers, num_decoder_layers, dropout):
+#         super().__init__()
+ 
+#         # INFO
+#         self.model_type = "Transformer"
+#         self.dim_model = dim_model
+ 
+#         # LAYERS
+#         self.positional_encoder = PositionalEncoding(dim_model=dim_model, dropout_p=dropout, max_len=5000)
+#         self.embedding = nn.Embedding(num_tokens, dim_model)
+#         self.transformer = nn.Transformer(
+#             d_model=dim_model,
+#             nhead=num_heads,
+#             num_encoder_layers=num_encoder_layers,
+#             num_decoder_layers=num_decoder_layers,
+#             dropout=dropout,
+#         )
+#         self.out = nn.Linear(dim_model, num_tokens)
+ 
+#     def forward(self, src, tgt, tgt_mask=None, src_pad_mask=None, tgt_pad_mask=None):
+#         # src, Tgt size -> (batch_size, src sequence length)
+ 
+#         # Embedding + positional encoding - Out size = (batch_size, sequence length, dim_model)
+#         src = self.embedding(src) * math.sqrt(self.dim_model)
+#         tgt = self.embedding(tgt) * math.sqrt(self.dim_model)
+#         src = self.positional_encoder(src)
+#         tgt = self.positional_encoder(tgt)
+ 
+#         src = src.permute(1,0,2)
+#         tgt = tgt.permute(1,0,2)
+ 
+#         # Transformer blocks - Out size = (sequence length, batch_size, num_tokens)
+#         transformer_out = self.transformer(src, tgt, tgt_mask=tgt_mask, src_key_padding_mask=src_pad_mask, tgt_key_padding_mask=tgt_pad_mask)
+#         out = self.out(transformer_out)
+ 
+#         return out
+ 
+#     def get_tgt_mask(self, size) -> torch.tensor:
+#         mask = torch.tril(torch.ones(size, size) == 1) # Lower triangular matrix
+#         mask = mask.float()
+#         mask = mask.masked_fill(mask == 0, float('-inf')) # Convert zeros to -inf
+#         mask = mask.masked_fill(mask == 1, float(0.0)) # Convert ones to 0
+ 
+#         return mask
+ 
+#     def create_pad_mask(self, matrix: torch.tensor, pad_token: int) -> torch.tensor:
+#         return (matrix == pad_token)
 
 def train(model, train_data, type, epoch, optimizer, scheduler, criterion, batch_size, input_window, output_window, RESULT_TXT_PATH):
     model.train() # Turn on the train mode
