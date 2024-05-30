@@ -55,6 +55,7 @@ class TransAm(nn.Module):
         src = self.pos_encoder(src)
         output = self.transformer_encoder(src,self.src_mask)#, self.src_mask)
         output = self.decoder(output)
+
         return output
 
     def _generate_square_subsequent_mask(self, sz):
@@ -145,8 +146,8 @@ def train(model, train_data, type, epoch, optimizer, scheduler, criterion, batch
         
     return model, optimizer, scheduler, loss.item()
 
-
-def predict_future(eval_models, data_source_list, epoch, steps, input_window, output_window, RESULT_TXT_PATH, RESULT_PATH):
+SEP = -100
+def predict_future(eval_models, data_source_list, epoch, steps, input_window, output_window, RESULT_TXT_PATH, RESULT_PATH, diff, mean_std):
     mse = nn.MSELoss()
     mae = nn.L1Loss()
     smape = SMAPE()
@@ -165,25 +166,42 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
         eval_model, _, _ = eval_models[type]
         eval_model.eval()
 
-        _ , data = get_batch(data_source, 0, 1, input_window + output_window)
+        data, _ = get_batch(data_source, 0, 1, input_window + output_window)
 
         with torch.no_grad():
             if steps == 1:
                 data = eval_model(data[-input_window:])
                 steps = output_window
-                
+
             else:
-                for i in range(0, steps):
-                    output = eval_model(data[-input_window:])
-                    data = torch.cat((data[:-1], output[-1:], torch.Tensor([[[.0]]]).to(data.device)))
+                split_id = 1
+                data_list = list(data.squeeze().squeeze().cpu())
+                for i, d in enumerate(data_list[::-1]):
+                    if d == SEP:
+                        split_id = len(data_list) - i
+                        break
+                pred_output = []
                 
+                for _ in range(0, steps):
+                    output = eval_model(data)
+                    pred_output.append(output[-1].squeeze().squeeze().cpu())
+                    data = data.squeeze().squeeze()
+                    next_seq = np.append(np.array(data[split_id:-2].cpu()), np.array(output[-1].cpu()))
+                    pred_seq = next_seq.copy()
+                    if diff:
+                        diff_seq = np.append(np.diff(next_seq), np.array([SEP]))
+                        pred_seq = np.append(diff_seq, pred_seq)
+                    if mean_std:
+                        mean_std_val = np.array([np.mean(next_seq), SEP, np.std(next_seq)])
+                        mean_std_val = np.append(mean_std_val, np.array([SEP]))
+                        pred_seq = np.append(mean_std_val, pred_seq)
+                    data = torch.Tensor(np.append(pred_seq, np.array(.0))).to(data.device).unsqueeze(-1).unsqueeze(-1)
         
         true_val_len = steps + input_window
-        data = data.cpu().view(-1)
         true_future = np.array([data_source[i][1][0].cpu() for i in range(true_val_len)])
         true_val = np.array([data_source[i][1][0].cpu() for i in range(true_val_len)])
         
-        data_tensor = torch.Tensor(data[-steps:])
+        data_tensor = torch.Tensor(pred_output[-steps:])
         data_true_future = torch.Tensor(true_future)
         mse_score = mse(data_tensor, data_true_future[-steps:].squeeze())
         mae_score = mae(data_tensor, data_true_future[-steps:].squeeze())
@@ -193,14 +211,14 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
         total_mae += mae_score
         total_smape += smape_score
 
-        data = scaler.inverse_transform(data.reshape(-1, 1))
+        pred_output = scaler.inverse_transform(np.array(pred_output).reshape(-1, 1))
         true_val = scaler.inverse_transform(np.array(true_val).reshape(-1, 1))
 
         with open(RESULT_TXT_PATH, 'a') as f:
             f.write(f"{type} {epoch} epochs - mse: {mse_score}, mae: {mae_score}\n")
         pyplot.subplot(5, 2, sub_num)
         pyplot.plot(true_val,color="red", label="true")
-        pyplot.plot(range(input_window, input_window + steps), data[-steps-1:-1],color="blue", label='predictions')
+        pyplot.plot(range(input_window, input_window + steps), pred_output,color="blue", label='predictions')
         pyplot.grid(True, which='both')
         pyplot.title(type)
         pyplot.legend()

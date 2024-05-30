@@ -34,8 +34,8 @@ def train_start(train_data_list,
                 device,
                 dropout=0.1,
                 is_save=False,
-                diff=None,
-                mean_std=None):
+                diff=False,
+                mean_std=False):
     # Set parameters
     input_window = input_window
     output_window = 1
@@ -125,7 +125,9 @@ def train_start(train_data_list,
                                              input_window,
                                              output_window,
                                              RESULT_TXT_PATH,
-                                             RESULT_PATH)
+                                             RESULT_PATH,
+                                             diff,
+                                             mean_std)
             # save loss graph
             pyplot.plot(train_losses, label='train loss')
             pyplot.plot(val_losses, label='val loss')
@@ -185,7 +187,7 @@ def one_train_start(train_data_list,
     batch_size = batch_size # batch size
     best_val_loss = float("inf")
     epochs = epochs # The number of epochs
-    log_epoch = 10
+    log_epoch = 1
     best_models = dict()
 
     feature_size = feature_size
