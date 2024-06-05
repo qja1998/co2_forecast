@@ -74,7 +74,7 @@ class TransformerFull(nn.Module):
 
         # LAYERS
         self.positional_encoder = PositionalEncoding(d_model=dim_model, max_len=5000)
-        self.embedding = nn.Embedding(num_tokens, dim_model)
+        # self.embedding = nn.Embedding(num_tokens, dim_model)
         self.transformer = nn.Transformer(
             d_model=dim_model,
             nhead=num_heads,
@@ -88,8 +88,8 @@ class TransformerFull(nn.Module):
         # Src, Tgt size 는 반드시 (batch_size, src sequence length) 여야 합니다.
 
         # Embedding + positional encoding - Out size = (batch_size, sequence length, dim_model)
-        src = self.embedding(src) * math.sqrt(self.dim_model)
-        tgt = self.embedding(tgt) * math.sqrt(self.dim_model)
+        # src = self.embedding(src) * math.sqrt(self.dim_model)
+        # tgt = self.embedding(tgt) * math.sqrt(self.dim_model)
         src = self.positional_encoder(src)
         tgt = self.positional_encoder(tgt)
 
