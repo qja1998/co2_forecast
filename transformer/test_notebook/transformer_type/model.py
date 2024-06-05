@@ -16,7 +16,7 @@ calculate_loss_over_all_values = False
 class PositionalEncoding(nn.Module):
 
     def __init__(self, d_model, max_len=5000):
-        super(PositionalEncoding, self).__init__()       
+        super(PositionalEncoding, self).__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
@@ -73,7 +73,7 @@ class TransformerFull(nn.Module):
         self.dim_model = dim_model
 
         # LAYERS
-        self.positional_encoder = PositionalEncoding(dim_model=dim_model, dropout_p=dropout_p, max_len=5000)
+        self.positional_encoder = PositionalEncoding(d_model=dim_model, max_len=5000)
         self.embedding = nn.Embedding(num_tokens, dim_model)
         self.transformer = nn.Transformer(
             d_model=dim_model,

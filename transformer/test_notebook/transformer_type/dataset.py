@@ -61,7 +61,7 @@ def get_data(df, input_window, output_window, scaler_name, diff=False, mean_std=
 
 def get_batch(source, i, batch_size, input_window):
     seq_len = min(batch_size, len(source) - 1 - i)
-    data = source[i:i+seq_len]    
+    data = source[i:i+seq_len]
     input = torch.stack(torch.stack([item[0] for item in data]).chunk(input_window,1)) # 1 is feature size
     target = torch.stack(torch.stack([item[1] for item in data]).chunk(input_window,1))
     return input, target
