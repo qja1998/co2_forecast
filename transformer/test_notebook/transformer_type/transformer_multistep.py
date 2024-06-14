@@ -24,6 +24,7 @@ random.seed(0)
 def train_start(train_data_list,
                 val_data_list,
                 input_window,
+                output_window,
                 pred_step,
                 batch_size,
                 epochs,
@@ -33,12 +34,13 @@ def train_start(train_data_list,
                 lr,
                 device,
                 dropout=0.1,
-                is_save=False,
                 diff=False,
-                mean_std=False):
+                mean_std=False,
+                is_save=True,
+                wandb_log=False):
     # Set parameters
     input_window = input_window
-    output_window = 1
+    output_window = output_window
     batch_size = batch_size # batch size
     best_val_loss = float("inf")
     epochs = epochs # The number of epochs
@@ -64,23 +66,35 @@ def train_start(train_data_list,
     with open(RESULT_TXT_PATH, 'w') as f:
         f.write('')
 
-    wandb.init(
-        # set the wandb project where this run will be logged
-        project="co2 emission forecasting",
-        
-        # track hyperparameters and run metadata
-        config={
-        "learning_rate": lr,
-        "epochs": epochs,
-        }
-    )
-    wandb.run.name = RESULT_PATH.split('/')[-1]
-    wandb.run.save()
+    if wandb_log:
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="co2 emission forecasting",
+            
+            # track hyperparameters and run metadata
+            config={
+            "learning_rate": lr,
+            "epochs": epochs,
+            }
+        )
+        wandb.run.name = RESULT_PATH.split('/')[-1]
+        wandb.run.save()
 
     criterion = nn.MSELoss()
 
 
-    models = {type:[TransAm(feature_size=feature_size, num_layers=num_layers, d_ff=d_ff, dropout=dropout).to(device)] for _, type, _ in train_data_list}
+    models = {
+        type:[
+            TransAm(
+                iw=input_window,
+                ow=output_window,
+                feature_size=feature_size,
+                num_layers=num_layers,
+                d_ff=d_ff,
+                dropout=dropout,
+                output_size=1
+                ).to(device)
+            ] for _, type, _ in train_data_list}
 
     for t in models:
         model = models[t][0]
@@ -127,7 +141,8 @@ def train_start(train_data_list,
                                              RESULT_TXT_PATH,
                                              RESULT_PATH,
                                              diff,
-                                             mean_std)
+                                             mean_std,
+                                             wandb_log)
             # save loss graph
             pyplot.plot(train_losses, label='train loss')
             pyplot.plot(val_losses, label='val loss')
@@ -147,7 +162,8 @@ def train_start(train_data_list,
         for val_data, type, scaler in val_data_list:
             model, optimizer, scheduler = models[type]
             val_loss = evaluate(model, val_data, criterion, input_window, output_window)
-            wandb.log({f"val_loss_{type}": val_loss})
+            if wandb_log:
+                wandb.log({f"val_loss_{type}": val_loss})
             total_val_loss += val_loss
         val_losses.append(total_val_loss / num_types)
         total_train_loss = total_val_loss / num_types
@@ -156,7 +172,8 @@ def train_start(train_data_list,
             f.write('| end of epoch {:3d} | time: {:5.2f}s | valid loss(mse) {:5.5f} | valid ppl {:8.2f}\n'.format(epoch, (time.time() - epoch_start_time),
                                             total_train_loss, math.exp(total_train_loss)))
             f.write('-' * 89 + '\n')
-            wandb.log({"val_loss_total": total_train_loss})
+            if wandb_log:
+                wandb.log({"val_loss_total": total_train_loss})
 
         scheduler.step()
 

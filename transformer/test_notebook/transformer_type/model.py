@@ -31,7 +31,7 @@ class PositionalEncoding(nn.Module):
        
 
 class TransAm(nn.Module):
-    def __init__(self,feature_size=256,num_layers=3,d_ff=2048,dropout=0.1, output_size=1):
+    def __init__(self, iw, ow, feature_size=256,num_layers=3,d_ff=2048,dropout=0.1, output_size=1):
         super(TransAm, self).__init__()
 
         self.src_mask = None
@@ -39,6 +39,19 @@ class TransAm(nn.Module):
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dim_feedforward=d_ff, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)        
         self.decoder = nn.Linear(feature_size, output_size)
+
+        self.linear =  nn.Sequential(
+            nn.Linear(feature_size, feature_size//2),
+            nn.ReLU(),
+            nn.Linear(feature_size//2, 1)
+        )
+
+        self.linear2 = nn.Sequential(
+            nn.Linear(iw+ow-1, (iw+ow)//2),
+            nn.ReLU(),
+            nn.Linear((iw+ow)//2, ow)
+        )
+
         self.init_weights()
 
     def init_weights(self):
@@ -54,7 +67,9 @@ class TransAm(nn.Module):
 
         src = self.pos_encoder(src)
         output = self.transformer_encoder(src,self.src_mask)#, self.src_mask)
-        output = self.decoder(output)
+        # output = self.decoder(output)
+        output = self.linear(output.transpose(0,1))[:,:,0]
+        output = self.linear2(output).transpose(0, 1)
 
         return output
 
@@ -172,11 +187,10 @@ def train(model, train_data, type, epoch, optimizer, scheduler, criterion, batch
         data, targets = get_batch(train_data, i, batch_size, input_window + output_window)
         optimizer.zero_grad()
         output = model(data)
-
         if calculate_loss_over_all_values:
             loss = criterion(output, targets)
         else:
-            loss = criterion(output[-output_window:], targets[-output_window:])
+            loss = criterion(output[-output_window:], targets[-output_window:].squeeze())
     
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
@@ -198,20 +212,22 @@ def train(model, train_data, type, epoch, optimizer, scheduler, criterion, batch
     return model, optimizer, scheduler, loss.item()
 
 SEP = -100
-def predict_future(eval_models, data_source_list, epoch, steps, input_window, output_window, RESULT_TXT_PATH, RESULT_PATH, diff, mean_std):
+def predict_future(eval_models, data_source_list, epoch, steps, input_window, output_window, RESULT_TXT_PATH, RESULT_PATH, diff, mean_std, wandb_log=False):
     mse = nn.MSELoss()
     mae = nn.L1Loss()
     smape = SMAPE()
 
-    total_mse = 0
-    total_mae = 0
-    total_smape = 0
+    # total_mse = 0
+    # total_mae = 0
+    # total_smape = 0
 
     origin_step = steps
     
     pyplot.figure(figsize=(20, 10))
     sub_num = 1
+    total_pred, total_true = np.array([]), np.array([])
     for data_source, type, scaler in data_source_list:
+        scaler, diff_scaler = scaler
         steps = origin_step
 
         eval_model, _, _ = eval_models[type]
@@ -221,16 +237,18 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
 
         with torch.no_grad():
             if steps == 1:
-                data = eval_model(data[-input_window:])
+                pred_output = eval_model(data)
                 steps = output_window
+                pred_output = pred_output.squeeze().squeeze().cpu()[-steps:]
 
             else:
-                split_id = 0
-                data_list = list(data.squeeze().squeeze().cpu())
-                for i, d in enumerate(data_list[::-1]):
-                    if d == SEP:
-                        split_id = len(data_list) - i
-                        break
+                if diff or mean_std:
+                    split_id = 0
+                    data_list = list(data.squeeze().squeeze().cpu())
+                    for i, d in enumerate(data_list[::-1]):
+                        if d == SEP:
+                            split_id = len(data_list) - i
+                            break
                 pred_output = []
 
                 for _ in range(0, steps):
@@ -258,15 +276,18 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
         mae_score = mae(data_tensor, data_true_future[-steps:].squeeze())
         smape_score = smape(data_tensor, data_true_future[-steps:].squeeze())
 
-        total_mse += mse_score
-        total_mae += mae_score
-        total_smape += smape_score
+        # total_mse += mse_score
+        # total_mae += mae_score
+        # total_smape += smape_score
+
+        total_pred += list(pred_output)
+        total_true += list(true_future)
 
         pred_output = scaler.inverse_transform(np.array(pred_output).reshape(-1, 1))
         true_val = scaler.inverse_transform(np.array(true_val).reshape(-1, 1))
 
         with open(RESULT_TXT_PATH, 'a') as f:
-            f.write(f"{type} {epoch} epochs - mse: {mse_score}, mae: {mae_score}\n")
+            f.write(f"{type} {epoch} epochs - MSE: {mse_score}, MAE: {mae_score}, SAMPE: {smape_score}\n")
         pyplot.subplot(5, 2, sub_num)
         pyplot.plot(true_val,color="red", label="true")
         pyplot.plot(range(input_window, input_window + steps), pred_output,color="blue", label='predictions')
@@ -274,17 +295,24 @@ def predict_future(eval_models, data_source_list, epoch, steps, input_window, ou
         pyplot.title(type)
         pyplot.legend()
 
-        wandb.log({f"pred_{type}": data_tensor, f"true_{type}": data_true_future[-steps:]})
+        if wandb_log:
+            wandb.log({f"pred_{type}": data_tensor, f"true_{type}": data_true_future[-steps:]})
 
         sub_num += 1
 
-    num_types = len(data_source_list)
-    mse_result, mae_result, smape_result = total_mse / num_types, total_mae / num_types, smape_score / num_types
+    # num_types = len(data_source_list)
+    # mse_result, mae_result, smape_result = total_mse / num_types, total_mae / num_types, smape_score / num_types
+
+    mse_result = mse(total_pred, total_true)
+    mae_result = mae((total_pred, total_true))
+    smape_result = smape(total_pred, total_true)
+    
     with open(RESULT_TXT_PATH, 'a') as f:
         f.write(f"Total {epoch} epochs - mse: {mse_result}, mae: {mae_result}, sampe: {smape_result}\n")
+    if wandb_log:
         wandb.log({"pred_MSE": mse_result, "pred_MAE": mae_result, 'pred_SMAPE' : smape_result})
 
-    pyplot.savefig(RESULT_PATH + '/future%d/transformer-future%d.png'%(steps, epoch))
+    pyplot.savefig(RESULT_PATH + '/future%d/transformer-future%d.png'%(origin_step, epoch))
     pyplot.close()
     return mse_result, mae_result, smape_result
         
@@ -301,7 +329,7 @@ def evaluate(eval_model, data_source, criterion, input_window, output_window):
             output = eval_model(data)
             if calculate_loss_over_all_values:
                 total_loss += len(data[0])* criterion(output, targets).cpu().item()
-            else:                                
-                total_loss += len(data[0])* criterion(output[-output_window:], targets[-output_window:]).cpu().item()
+            else:
+                total_loss += len(data[0])* criterion(output[-output_window:], targets[-output_window:].squeeze()).cpu().item()
         total_val_len += len(data_source)
     return total_loss / total_val_len
